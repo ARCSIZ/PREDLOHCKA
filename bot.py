@@ -67,8 +67,11 @@ CHANNEL_ID     = int(os.getenv("CHANNEL_ID", "-1001234567890"))  # новост�
 ADMIN_CHAT_ID  = int(os.getenv("ADMIN_CHAT_ID", "-1001234567890"))  # чат предложки с топиками
 GOOGLE_DOC_URL = os.getenv("GOOGLE_DOC_URL", "https://docs.google.com/document/d/ВСТАВЬ_ID/edit")
 POST_PRICE     = int(os.getenv("POST_PRICE", "500"))             # $ за пост в казну
-DB_PATH        = os.getenv("DB_PATH", "suggest_bot.db")
-BOT_BUILD      = "v3-config-fix"  # метка сборки: видна в логе при старте
+# На bothost.ru задан DATA_DIR=/app/data — база ляжет туда и переживёт
+# «Обновить из Git». Локально DATA_DIR нет — база будет рядом с bot.py
+DATA_DIR       = os.getenv("DATA_DIR", ".")
+DB_PATH        = os.getenv("DB_PATH", os.path.join(DATA_DIR, "suggest_bot.db"))
+BOT_BUILD      = "v4.1-pin-fix"  # метка сборки: видна в логе при старте
 
 # Значения-заглушки: нужны, чтобы отличить «забыли заполнить» от реального ID
 _PLACEHOLDERS = {
@@ -325,13 +328,38 @@ async def try_open_topic(user: User, kind: str) -> tuple[int, str] | None:
 
 
 async def safe_pin(chat_id: int, message_id: int, thread_id: int) -> None:
+    """Закреп внутри топика. На старом aiogram (<3.7), который не знает
+    message_thread_id, уходим в Bot API напрямую — aiohttp и так с нами."""
     try:
         await bot.pin_chat_message(
             chat_id, message_id,
             disable_notification=True, message_thread_id=thread_id,
         )
+        return
+    except TypeError:
+        pass  # старый aiogram — fallback ниже
     except TelegramBadRequest as e:
         log.warning("Не удалось закрепить: %s", e.message)
+        return
+    try:
+        import aiohttp
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/pinChatMessage"
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "message_thread_id": thread_id,
+            "disable_notification": True,
+        }
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, json=payload) as r:
+                data = await r.json()
+        if not data.get("ok"):
+            log.warning("pinChatMessage API: %s", data.get("description"))
+        else:
+            log.info("pin через прямой Bot API ок (message %s, топик %s)",
+                     message_id, thread_id)
+    except Exception as e:
+        log.warning("pin fallback: %s", e)
 
 
 async def finalize_topic(row: sqlite3.Row, mark: str, status: str,
@@ -944,7 +972,10 @@ async def ids_catch_emoji(m: Message, state: FSMContext) -> None:
 
 async def verify_config() -> None:
     """Диагностика при старте: какой файл запущен и что бот реально видит."""
-    log.info("Запущен файл: %s · сборка %s", os.path.abspath(__file__), BOT_BUILD)
+    log.info(
+        "Запущен файл: %s · сборка %s · база: %s",
+        os.path.abspath(__file__), BOT_BUILD, os.path.abspath(DB_PATH),
+    )
     log.info(
         "Конфиг · OWNER_ID=%s · SYSADMIN_ID=%s · ADMIN_CHAT_ID=%s · CHANNEL_ID=%s",
         OWNER_ID, SYSADMIN_ID, ADMIN_CHAT_ID, CHANNEL_ID,
@@ -991,6 +1022,17 @@ async def verify_config() -> None:
                 getattr(member, "can_pin_messages", "—"),
                 getattr(member, "can_post_messages", "—"),
             )
+            if name == "ADMIN_CHAT_ID":
+                if not getattr(member, "can_manage_topics", False):
+                    log.error("   ⛔ НЕТ права «Управление топиками» — топики заявок не создадутся!")
+                if not getattr(member, "can_pin_messages", False):
+                    log.error("   ⛔ НЕТ права «Закрепление сообщений» — пост и чек не закрепятся!")
+            if name == "CHANNEL_ID" and not getattr(member, "can_post_messages", False):
+                log.error(
+                    "   ⛔ НЕТ права «Публикация сообщений» в канале! "
+                    "Кнопка «Опубликовать» будет падать. Включите: "
+                    "Канал → Администраторы → бот → Публикация сообщений"
+                )
         except TelegramBadRequest as e:
             log.error("   get_chat_member: %s", e.message)
 
