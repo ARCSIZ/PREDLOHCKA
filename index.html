@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bot.py — бот предложки новостного канала</title>
+<meta name="description" content="Бот предложки: посты за $500 с проверкой чека, топики заявок в чате админов, анкетирование персонала, восстановление из старого бота и система ролей. Один файл на aiogram 3.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23a3e635'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='16' font-weight='700' text-anchor='middle' fill='%23070907'%3E%3E_%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;900&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<style>
+  :root{
+    --bg:#070907; --lime:#a3e635; --yellow:#ffd43b;
+    --blue:#63b3ed; --pink:#f472b6; --ink:#e9f2e4;
+  }
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',ui-monospace,monospace;overflow-x:hidden}
+  .font-display{font-family:'Unbounded',sans-serif}
+  ::selection{background:var(--lime);color:#070907}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:#0a0d09}
+  ::-webkit-scrollbar-thumb{background:rgba(163,230,53,.22);border-radius:99px;border:2px solid #0a0d09}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(163,230,53,.4)}
+
+  .grid-bg{
+    background-image:
+      linear-gradient(rgba(163,230,53,.05) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(163,230,53,.05) 1px,transparent 1px);
+    background-size:54px 54px;
+    mask-image:radial-gradient(ellipse 90% 70% at 50% 0%,#000 30%,transparent 100%);
+  }
+  .noise{position:fixed;inset:0;z-index:50;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");}
+
+  .caret{animation:blink 1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  @keyframes marquee{to{transform:translateX(-50%)}}
+  .marquee-track{animation:marquee 26s linear infinite}
+  @keyframes floaty{0%,100%{transform:translateY(0) rotate(var(--r,0deg))}50%{transform:translateY(-14px) rotate(var(--r,0deg))}}
+  .floaty{animation:floaty 7s ease-in-out infinite}
+
+  .reveal{opacity:0;transform:translateY(28px);transition:opacity .9s cubic-bezier(.22,1,.36,1),transform .9s cubic-bezier(.22,1,.36,1)}
+  .reveal.visible{opacity:1;transform:none}
+
+  .hljs{background:transparent;padding:0;color:#cfe0c6}
+  .hljs-comment,.hljs-quote{color:#5c6f58;font-style:italic}
+  .hljs-keyword,.hljs-selector-tag{color:var(--yellow)}
+  .hljs-string,.hljs-doctag,.hljs-regexp{color:var(--lime)}
+  .hljs-number,.hljs-literal{color:#ff8a5c}
+  .hljs-title.function_{color:#8ecbff}
+  .hljs-title.class_,.hljs-type{color:#7ee787}
+  .hljs-built_in{color:#8ecbff}
+  .hljs-meta{color:var(--pink)}
+  .hljs-params{color:#cfe0c6}
+  .hljs-subst{color:#ffd43b}
+  .hljs-operator,.hljs-punctuation{color:#9fb497}
+
+  .t-line{white-space:pre-wrap;word-break:break-word}
+  .t-prompt{color:rgba(190,242,100,.9)}
+  .t-cmd{color:rgba(255,255,255,.92)}
+  .t-caret{display:inline-block;height:15px;width:7px;background:rgba(190,242,100,.85);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+  .t-time{color:rgba(255,255,255,.28)}
+  .t-info{color:var(--lime)}
+  .t-src{color:rgba(125,211,252,.75)}
+  .t-msg{color:rgba(255,255,255,.6)}
+  .t-in{color:#7dd3fc}
+  .t-ok{color:var(--yellow)}
+  .t-dim{color:rgba(255,255,255,.32)}
+  .t-file{color:rgba(255,255,255,.85)}
+  .t-pin{color:#f9a8d4}
+  .scanlines{position:relative}
+  .scanlines::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.025) 0 1px,transparent 1px 3px);}
+
+  .gutter div{height:1.75rem;line-height:1.75rem}
+  #code-frame{transform-style:preserve-3d;will-change:transform;transition:transform .35s cubic-bezier(.22,1,.36,1)}
+  .btn-primary{transition:transform .25s cubic-bezier(.22,1,.36,1),box-shadow .25s}
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 12px 40px -8px rgba(163,230,53,.45)}
+  .btn-ghost{transition:border-color .25s,color .25s,transform .25s}
+  .btn-ghost:hover{transform:translateY(-2px)}
+  .card{transition:border-color .35s,background .35s,transform .35s cubic-bezier(.22,1,.36,1)}
+  .card:hover{transform:translateY(-4px)}
+</style>
+</head>
+
+<body class="antialiased">
+<div class="noise"></div>
+
+<!-- ══════════ NAV ══════════ -->
+<nav class="fixed inset-x-0 top-0 z-40 border-b border-white/5 bg-[#070907]/75 backdrop-blur-xl">
+  <div class="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+    <a href="#top" class="group flex items-center gap-3">
+      <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-[#a3e635] text-[#070907] shadow-[0_0_24px_-4px_rgba(163,230,53,.6)]">
+        <i data-lucide="bot" class="h-4.5 w-4.5"></i>
+      </span>
+      <span class="font-display text-sm font-bold tracking-tight">bot<span class="text-[#a3e635]">.py</span></span>
+      <span class="hidden rounded-full border border-[#a3e635]/25 bg-[#a3e635]/8 px-2.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-[#d9f99d] sm:inline">предложка</span>
+    </a>
+    <div class="hidden items-center gap-8 text-[11px] uppercase tracking-[0.22em] text-white/45 md:flex">
+      <a href="#code" class="transition-colors hover:text-[#a3e635]">Код</a>
+      <a href="#features" class="transition-colors hover:text-[#a3e635]">Возможности</a>
+      <a href="#run" class="transition-colors hover:text-[#a3e635]">Запуск</a>
+    </div>
+    <button onclick="copySource()" class="flex items-center gap-2 rounded-full border border-[#a3e635]/25 bg-[#a3e635]/5 px-4 py-2 text-xs text-[#d9f99d] transition-all hover:border-[#a3e635]/60 hover:bg-[#a3e635]/15">
+      <i data-lucide="copy" class="h-3.5 w-3.5"></i><span class="hidden sm:inline">скопировать файл</span><span class="sm:hidden">bot.py</span>
+    </button>
+  </div>
+</nav>
+
+<!-- ══════════ HERO ══════════ -->
+<header id="top" class="relative flex min-h-screen items-center overflow-hidden pt-16">
+  <div class="grid-bg absolute inset-0"></div>
+  <div class="absolute -top-32 left-1/4 h-96 w-96 rounded-full bg-[#a3e635]/10 blur-[120px]"></div>
+  <div class="absolute top-1/3 -right-24 h-80 w-80 rounded-full bg-[#63b3ed]/10 blur-[110px]"></div>
+  <div class="absolute bottom-0 left-0 h-64 w-64 rounded-full bg-[#ffd43b]/8 blur-[100px]"></div>
+
+  <div class="pointer-events-none absolute inset-0 hidden lg:block" aria-hidden="true">
+    <span class="floaty absolute left-[6%] top-[22%] text-xs text-[#a3e635]/25 blur-[.5px]" style="--r:-6deg;animation-delay:.3s">create_forum_topic(ADMIN_CHAT_ID)</span>
+    <span class="floaty absolute left-[2%] bottom-[26%] text-[13px] text-white/15" style="--r:3deg;animation-delay:1.2s">pin_chat_message(..., message_thread_id=tid)</span>
+    <span class="floaty absolute right-[4%] top-[18%] text-xs text-[#ffd43b]/25 blur-[.5px]" style="--r:5deg;animation-delay:.8s">1 пост = $500 в казну</span>
+    <span class="floaty absolute right-[8%] bottom-[18%] text-[13px] text-[#63b3ed]/25" style="--r:-4deg;animation-delay:1.7s">@dp.message(F.chat.id == ADMIN_CHAT_ID)</span>
+  </div>
+
+  <div class="relative mx-auto grid w-full max-w-6xl gap-14 px-6 py-20 lg:grid-cols-[1.05fr_.95fr] lg:items-center">
+    <div>
+      <div class="reveal mb-7 inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-[11px] tracking-wide text-white/60">
+        <i data-lucide="newspaper" class="h-3.5 w-3.5 text-[#a3e635]"></i>
+        предложка новостного канала
+        <span class="h-1 w-1 rounded-full bg-white/25"></span>
+        <span class="text-[#a3e635]">v2 · топики заявок</span>
+      </div>
+
+      <h1 class="reveal font-display text-[clamp(3.2rem,9vw,6.5rem)] font-black leading-[0.95] tracking-tight" style="transition-delay:.08s">
+        bot<span class="bg-gradient-to-r from-[#a3e635] via-[#ffd43b] to-[#a3e635] bg-clip-text text-transparent">.py</span><span class="caret ml-2 inline-block h-[0.7em] w-[0.09em] translate-y-[0.08em] bg-[#a3e635]"></span>
+      </h1>
+
+      <p class="reveal mt-7 max-w-md text-sm leading-7 text-white/55 sm:text-base sm:leading-8" style="transition-delay:.16s">
+        Посты за <span class="text-white/85">$500 в казну</span> с проверкой чека,
+        отдельный <span class="text-white/85">форум-топик на каждую заявку</span>,
+        анкетирование персонала, восстановление из старого бота
+        и жёсткая система ролей. Один файл на aiogram 3.
+      </p>
+
+      <div class="reveal mt-9 flex flex-wrap items-center gap-4" style="transition-delay:.24s">
+        <button onclick="copySource()" class="btn-primary flex items-center gap-2.5 rounded-xl bg-[#a3e635] px-6 py-3.5 text-sm font-bold text-[#070907]">
+          <i data-lucide="copy" class="h-4 w-4"></i>Скопировать bot.py
+        </button>
+        <a href="#code" class="btn-ghost flex items-center gap-2.5 rounded-xl border border-white/15 px-6 py-3.5 text-sm text-white/75 hover:border-[#a3e635]/50 hover:text-[#a3e635]">
+          Смотреть исходник<i data-lucide="arrow-down" class="h-4 w-4"></i>
+        </a>
+      </div>
+
+      <div class="reveal mt-12 grid max-w-md grid-cols-3 gap-6 border-t border-white/8 pt-7" style="transition-delay:.32s">
+        <div>
+          <div class="font-display text-2xl font-bold text-[#a3e635]"><span data-lines>—</span></div>
+          <div class="mt-1 text-[10px] uppercase tracking-[0.18em] text-white/40">строк кода</div>
+        </div>
+        <div>
+          <div class="font-display text-2xl font-bold text-[#ffd43b]">5</div>
+          <div class="mt-1 text-[10px] uppercase tracking-[0.18em] text-white/40">сценариев</div>
+        </div>
+        <div>
+          <div class="font-display text-2xl font-bold text-[#8ecbff]">3</div>
+          <div class="mt-1 text-[10px] uppercase tracking-[0.18em] text-white/40">уровня ролей</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- живой терминал -->
+    <div class="reveal" style="transition-delay:.3s">
+      <div class="scanlines overflow-hidden rounded-2xl border border-[#a3e635]/15 bg-[#0a0e09]/90 shadow-[0_0_100px_-20px_rgba(163,230,53,.3)]">
+        <div class="flex items-center gap-2 border-b border-white/5 px-4 py-3">
+          <span class="h-3 w-3 rounded-full bg-[#ff5f57]"></span>
+          <span class="h-3 w-3 rounded-full bg-[#febc2e]"></span>
+          <span class="h-3 w-3 rounded-full bg-[#28c840]"></span>
+          <span class="ml-3 flex items-center gap-2 text-[11px] text-white/40"><i data-lucide="square-terminal" class="h-3.5 w-3.5"></i>zsh — ~/suggest</span>
+          <span class="ml-auto flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-[#a3e635]/70"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-[#a3e635]"></span>live</span>
+        </div>
+        <div id="term" class="h-[360px] space-y-1.5 overflow-hidden p-5 text-[12.5px] leading-6 sm:text-[13px]"></div>
+      </div>
+      <p class="mt-4 text-center text-[11px] text-white/30">терминал рисуется вживую · полный цикл заявки: текст → чек → топик → публикация</p>
+    </div>
+  </div>
+</header>
+
+<!-- ══════════ MARQUEE ══════════ -->
+<div class="overflow-hidden border-y border-[#a3e635]/10 bg-[#a3e635]/[0.03] py-3.5">
+  <div class="marquee-track flex w-max whitespace-nowrap">
+    <div class="flex items-center gap-10 pr-10 text-xs uppercase tracking-[0.3em] text-white/35">
+      <span>предложка</span><span class="text-[#a3e635]/60">//</span><span>$500 за пост</span><span class="text-[#a3e635]/60">//</span><span>топик на каждую заявку</span><span class="text-[#a3e635]/60">//</span><span>анкетирование</span><span class="text-[#a3e635]/60">//</span><span>восстановление</span><span class="text-[#a3e635]/60">//</span><span>роли и блокировки</span><span class="text-[#a3e635]/60">//</span><span>sqlite</span><span class="text-[#a3e635]/60">//</span><span>aiogram 3</span><span class="text-[#a3e635]/60">//</span>
+    </div>
+    <div class="flex items-center gap-10 pr-10 text-xs uppercase tracking-[0.3em] text-white/35" aria-hidden="true">
+      <span>предложка</span><span class="text-[#a3e635]/60">//</span><span>$500 за пост</span><span class="text-[#a3e635]/60">//</span><span>топик на каждую заявку</span><span class="text-[#a3e635]/60">//</span><span>анкетирование</span><span class="text-[#a3e635]/60">//</span><span>восстановление</span><span class="text-[#a3e635]/60">//</span><span>роли и блокировки</span><span class="text-[#a3e635]/60">//</span><span>sqlite</span><span class="text-[#a3e635]/60">//</span><span>aiogram 3</span><span class="text-[#a3e635]/60">//</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ CODE ══════════ -->
+<section id="code" class="relative scroll-mt-24 py-24 sm:py-32">
+  <div class="absolute left-1/2 top-0 h-72 w-[36rem] -translate-x-1/2 rounded-full bg-[#a3e635]/7 blur-[130px]"></div>
+  <div class="relative mx-auto max-w-6xl px-6">
+    <div class="mb-12 flex flex-wrap items-end justify-between gap-6">
+      <div class="reveal">
+        <div class="mb-3 text-[11px] uppercase tracking-[0.3em] text-[#a3e635]/80">// 01 — исходный код</div>
+        <h2 class="font-display text-3xl font-bold leading-tight sm:text-4xl">Вся предложка —<br>в одном файле</h2>
+      </div>
+      <div class="reveal flex flex-wrap gap-4 text-[11px] text-white/40" style="transition-delay:.1s">
+        <span class="flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-[#ffd43b]"></i>keyword</span>
+        <span class="flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-[#a3e635]"></i>string</span>
+        <span class="flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-[#f472b6]"></i>декоратор</span>
+        <span class="flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-[#8ecbff]"></i>function</span>
+      </div>
+    </div>
+
+    <div id="code-wrap" class="reveal" style="perspective:1400px;transition-delay:.15s">
+      <div id="code-frame" class="overflow-hidden rounded-2xl border border-[#a3e635]/15 bg-[#0a0e09] shadow-[0_30px_120px_-30px_rgba(163,230,53,.35)]">
+        <div class="flex items-center gap-2 border-b border-white/5 bg-white/[0.02] px-4 py-3">
+          <span class="h-3 w-3 rounded-full bg-[#ff5f57]"></span>
+          <span class="h-3 w-3 rounded-full bg-[#febc2e]"></span>
+          <span class="h-3 w-3 rounded-full bg-[#28c840]"></span>
+          <div class="ml-4 flex items-center gap-2 rounded-t-lg border-x border-t border-[#a3e635]/20 bg-[#a3e635]/8 px-4 py-1.5 text-xs text-[#d9f99d]">
+            <i data-lucide="file-code-2" class="h-3.5 w-3.5"></i>bot.py
+          </div>
+          <span class="hidden text-[11px] text-white/30 sm:inline">~/suggest/bot.py · aiogram 3 + sqlite3</span>
+          <button onclick="copySource()" class="ml-auto flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-[11px] text-white/60 transition-all hover:border-[#a3e635]/50 hover:text-[#a3e635]">
+            <i data-lucide="copy" class="h-3.5 w-3.5"></i>копировать
+          </button>
+        </div>
+
+        <div class="flex">
+          <div id="gutter" class="gutter select-none border-r border-white/5 py-5 pl-5 pr-4 text-right text-[13px] text-white/20"></div>
+          <div class="min-w-0 flex-1 overflow-x-auto">
+<pre class="py-5 pl-5 pr-6 text-[13px] leading-[1.75rem]"><code id="bot-code" class="language-python"></code></pre>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between border-t border-white/5 bg-white/[0.02] px-5 py-2.5 text-[11px] text-white/35">
+          <span>UTF-8 · LF · Python 3.11+</span>
+          <span>aiogram 3 · sqlite3 · <span data-lines>—</span> строк</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ FEATURES ══════════ -->
+<section id="features" class="scroll-mt-24 border-t border-white/5 py-24 sm:py-32">
+  <div class="mx-auto max-w-6xl px-6">
+    <div class="reveal mb-4">
+      <div class="mb-3 text-[11px] uppercase tracking-[0.3em] text-[#a3e635]/80">// 02 — что умеет</div>
+      <h2 class="font-display text-3xl font-bold leading-tight sm:text-4xl">Вся машина предложки,<br>от чека до публикации</h2>
+    </div>
+    <p class="reveal mb-14 max-w-xl text-sm leading-7 text-white/50" style="transition-delay:.08s">
+      Каждый сценарий заканчивается топиком в чате администрации: пост и чек закреплены,
+      внизу — кнопки управления, а любой ответ админа улетает автору от имени бота.
+    </p>
+
+    <div class="grid gap-4 md:grid-cols-2">
+      <div class="card reveal group rounded-2xl border border-white/8 bg-white/[0.02] p-8 hover:border-[#a3e635]/35 hover:bg-[#a3e635]/[0.04]">
+        <div class="mb-6 flex items-center justify-between">
+          <span class="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-[#a3e635] transition-colors group-hover:bg-[#a3e635] group-hover:text-[#070907]"><i data-lucide="banknote" class="h-5 w-5"></i></span>
+          <span class="font-display text-xs text-white/20">01</span>
+        </div>
+        <h3 class="font-display text-lg font-bold">Пост = $500 в казну</h3>
+        <p class="mt-3 text-sm leading-7 text-white/50">FSM-визард в два шага: сначала текст поста, потом обязательный <span class="text-white/75">скриншот перевода</span>. Без чека заявка просто не уходит дальше.</p>
+      </div>
+
+      <div class="card reveal group rounded-2xl border border-white/8 bg-white/[0.02] p-8 hover:border-[#ffd43b]/35 hover:bg-[#ffd43b]/[0.04]" style="transition-delay:.08s">
+        <div class="mb-6 flex items-center justify-between">
+          <span class="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-[#ffd43b] transition-colors group-hover:bg-[#ffd43b] group-hover:text-[#070907]"><i data-lucide="messages-square" class="h-5 w-5"></i></span>
+          <span class="font-display text-xs text-white/20">02</span>
+        </div>
+        <h3 class="font-display text-lg font-bold">Топик на каждую заявку</h3>
+        <p class="mt-3 text-sm leading-7 text-white/50">Бот создаёт форум-топик, копирует пост и чек, <span class="text-white/75">закрепляет их</span> и вешает сообщение управления: «Опубликовать», «Заблокировать», «Закрыть».</p>
+      </div>
+
+      <div class="card reveal group rounded-2xl border border-white/8 bg-white/[0.02] p-8 hover:border-[#63b3ed]/35 hover:bg-[#63b3ed]/[0.04]" style="transition-delay:.16s">
+        <div class="mb-6 flex items-center justify-between">
+          <span class="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-[#8ecbff] transition-colors group-hover:bg-[#63b3ed] group-hover:text-[#070907]"><i data-lucide="arrow-left-right" class="h-5 w-5"></i></span>
+          <span class="font-display text-xs text-white/20">03</span>
+        </div>
+        <h3 class="font-display text-lg font-bold">Мост админ ↔ автор</h3>
+        <p class="mt-3 text-sm leading-7 text-white/50">Ответ админа в топике уходит пользователю <span class="text-white/75">от имени бота</span>. Сообщение с «!» остаётся внутренним комментарием команды.</p>
+      </div>
+
+      <div class="card reveal group rounded-2xl border border-white/8 bg-white/[0.02] p-8 hover:border-[#f472b6]/35 hover:bg-[#f472b6]/[0.04]" style="transition-delay:.24s">
+        <div class="mb-6 flex items-center justify-between">
+          <span class="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-[#f9a8d4] transition-colors group-hover:bg-[#f472b6] group-hover:text-[#070907]"><i data-lucide="shield-check" class="h-5 w-5"></i></span>
+          <span class="font-display text-xs text-white/20">04</span>
+        </div>
+        <h3 class="font-display text-lg font-bold">Роли и блокировки</h3>
+        <p class="mt-3 text-sm leading-7 text-white/50">Владелец и сисадмин — константы, админов выдают командой <span class="text-white/75">/addadmin</span>. <span class="text-white/75">/block</span> глушит пользователя молча, через middleware. Всё живёт в SQLite.</p>
+      </div>
+
+      <div class="card reveal group rounded-2xl border border-white/8 bg-white/[0.02] p-8 hover:border-[#7ee787]/35 hover:bg-[#7ee787]/[0.04]" style="transition-delay:.32s">
+        <div class="mb-6 flex items-center justify-between">
+          <span class="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-[#7ee787] transition-colors group-hover:bg-[#7ee787] group-hover:text-[#070907]"><i data-lucide="clipboard-list" class="h-5 w-5"></i></span>
+          <span class="font-display text-xs text-white/20">05</span>
+        </div>
+        <h3 class="font-display text-lg font-bold">Набор в персонал</h3>
+        <p class="mt-3 text-sm leading-7 text-white/50"><span class="text-white/75">/recruit on</span> — рассылка всем пользователям с кнопкой <span class="text-white/75">Google Docs</span>, плюс анкета-визард на 4 вопроса внутри бота с кнопкой «Назначить админом».</p>
+      </div>
+
+      <div class="card reveal group rounded-2xl border border-white/8 bg-white/[0.02] p-8 hover:border-[#ff8a5c]/35 hover:bg-[#ff8a5c]/[0.04]" style="transition-delay:.4s">
+        <div class="mb-6 flex items-center justify-between">
+          <span class="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-[#ff8a5c] transition-colors group-hover:bg-[#ff8a5c] group-hover:text-[#070907]"><i data-lucide="archive-restore" class="h-5 w-5"></i></span>
+          <span class="font-display text-xs text-white/20">06</span>
+        </div>
+        <h3 class="font-display text-lg font-bold">Восстановление + /ids</h3>
+        <p class="mt-3 text-sm leading-7 text-white/50">Категория «Восстановление» собирает до 20 доказательств из старого бота одним топиком. А владельцу <span class="text-white/75">/ids</span> показывает ID чатов, топиков и премиум-эмодзи.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ RUN ══════════ -->
+<section id="run" class="relative scroll-mt-24 overflow-hidden border-t border-white/5 py-24 sm:py-32">
+  <div class="absolute right-0 top-1/4 h-72 w-72 rounded-full bg-[#ffd43b]/7 blur-[120px]"></div>
+  <div class="relative mx-auto max-w-6xl px-6">
+    <div class="reveal mb-4">
+      <div class="mb-3 text-[11px] uppercase tracking-[0.3em] text-[#a3e635]/80">// 03 — запуск</div>
+      <h2 class="font-display text-3xl font-bold leading-tight sm:text-4xl">Три шага —<br>и предложка в строю</h2>
+    </div>
+    <p class="reveal mb-14 max-w-lg text-sm leading-7 text-white/50" style="transition-delay:.08s">
+      Токен берём у <span class="text-[#d9f99d]">@BotFather</span>. Все ID — в блоке
+      <span class="text-white/75">НАСТРОЙКИ</span> вверху файла, ничего больше править не нужно.
+    </p>
+
+    <div class="grid gap-4 md:grid-cols-3">
+      <div class="reveal rounded-2xl border border-white/8 bg-[#0a0e09] p-6" style="transition-delay:0s">
+        <div class="mb-5 flex items-center justify-between">
+          <span class="font-display text-xs text-[#a3e635]">01</span>
+          <span class="text-[10px] uppercase tracking-[0.18em] text-white/35">зависимость</span>
+        </div>
+        <div class="flex items-center justify-between gap-3 rounded-xl border border-white/8 bg-black/40 px-4 py-3">
+          <code class="truncate text-[13px] text-[#d9f99d]"><span class="text-white/30">$</span> pip install aiogram</code>
+          <button onclick="copyText('pip install aiogram')" class="shrink-0 text-white/40 transition-colors hover:text-[#a3e635]"><i data-lucide="copy" class="h-4 w-4"></i></button>
+        </div>
+        <p class="mt-4 text-xs leading-6 text-white/40">Одна зависимость. SQLite — уже внутри Python.</p>
+      </div>
+
+      <div class="reveal rounded-2xl border border-white/8 bg-[#0a0e09] p-6" style="transition-delay:.1s">
+        <div class="mb-5 flex items-center justify-between">
+          <span class="font-display text-xs text-[#ffd43b]">02</span>
+          <span class="text-[10px] uppercase tracking-[0.18em] text-white/35">константы</span>
+        </div>
+        <div class="rounded-xl border border-white/8 bg-black/40 px-4 py-3 text-[12px] leading-6 text-white/70">
+          <div><span class="text-[#ffd43b]">OWNER_ID</span> = <span class="text-[#ff8a5c]">111111111</span></div>
+          <div><span class="text-[#ffd43b]">SYSADMIN_ID</span> = <span class="text-[#ff8a5c]">222222222</span></div>
+          <div><span class="text-[#ffd43b]">ADMIN_CHAT_ID</span> = <span class="text-[#ff8a5c]">-100…</span></div>
+          <div><span class="text-[#ffd43b]">CHANNEL_ID</span> = <span class="text-[#ff8a5c]">-100…</span></div>
+        </div>
+        <p class="mt-4 text-xs leading-6 text-white/40">Узнать ID поможет команда <span class="text-white/70">/ids</span> — прямо в нужном топике (только для владельца).</p>
+      </div>
+
+      <div class="reveal rounded-2xl border border-white/8 bg-[#0a0e09] p-6" style="transition-delay:.2s">
+        <div class="mb-5 flex items-center justify-between">
+          <span class="font-display text-xs text-[#8ecbff]">03</span>
+          <span class="text-[10px] uppercase tracking-[0.18em] text-white/35">старт</span>
+        </div>
+        <div class="flex items-center justify-between gap-3 rounded-xl border border-white/8 bg-black/40 px-4 py-3">
+          <code class="truncate text-[13px] text-[#c3e3ff]"><span class="text-white/30">$</span> python bot.py</code>
+          <button onclick="copyText('python bot.py')" class="shrink-0 text-white/40 transition-colors hover:text-[#63b3ed]"><i data-lucide="copy" class="h-4 w-4"></i></button>
+        </div>
+        <p class="mt-4 text-xs leading-6 text-white/40">Polling активен — первая заявка создаст первый топик.</p>
+      </div>
+    </div>
+
+    <div class="reveal mt-6 grid gap-4 md:grid-cols-2" style="transition-delay:.25s">
+      <div class="rounded-2xl border border-white/8 bg-white/[0.02] p-6">
+        <div class="mb-4 flex items-center gap-2.5 text-sm font-bold"><i data-lucide="check-square" class="h-4 w-4 text-[#a3e635]"></i>Чек-лист прав бота</div>
+        <ul class="space-y-2.5 text-xs leading-6 text-white/50">
+          <li class="flex gap-2.5"><i data-lucide="dot" class="h-4 w-4 shrink-0 text-[#a3e635]"></i>Чат предложки — супергруппа с включёнными топиками (форумом)</li>
+          <li class="flex gap-2.5"><i data-lucide="dot" class="h-4 w-4 shrink-0 text-[#a3e635]"></i>Бот — админ чата: права Manage Topics и Pin Messages</li>
+          <li class="flex gap-2.5"><i data-lucide="dot" class="h-4 w-4 shrink-0 text-[#a3e635]"></i>Бот — админ новостного канала: право Post Messages</li>
+          <li class="flex gap-2.5"><i data-lucide="dot" class="h-4 w-4 shrink-0 text-[#a3e635]"></i>GOOGLE_DOC_URL — ссылка на анкету для /recruit</li>
+        </ul>
+      </div>
+      <div class="flex flex-col justify-between gap-6 rounded-2xl border border-[#a3e635]/20 bg-gradient-to-r from-[#a3e635]/10 via-transparent to-[#ffd43b]/8 p-6">
+        <div>
+          <div class="font-display text-xl font-bold">Готово к деплою</div>
+          <p class="mt-2 text-sm leading-7 text-white/50">База suggest_bot.db создастся сама при первом запуске. Заблокированные, админы и топики переживут любой перезапуск.</p>
+        </div>
+        <button onclick="copySource()" class="btn-primary flex w-fit items-center gap-2.5 rounded-xl bg-[#a3e635] px-6 py-3.5 text-sm font-bold text-[#070907]">
+          <i data-lucide="file-code-2" class="h-4 w-4"></i>Забрать bot.py
+        </button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ FOOTER ══════════ -->
+<footer class="border-t border-white/5 py-10">
+  <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 text-[11px] text-white/35">
+    <span>© 2026 · bot.py — предложка в одном файле</span>
+    <span class="flex items-center gap-2"><i data-lucide="messages-square" class="h-3.5 w-3.5 text-[#a3e635]/60"></i>текст → чек $500 → топик → канал</span>
+  </div>
+</footer>
+
+<!-- toast -->
+<div id="toast" class="pointer-events-none fixed bottom-6 left-1/2 z-[60] flex -translate-x-1/2 translate-y-3 items-center gap-2.5 rounded-full border border-[#a3e635]/30 bg-[#0d120b]/95 px-5 py-2.5 text-xs text-[#d9f99d] opacity-0 shadow-[0_10px_40px_-10px_rgba(163,230,53,.4)] backdrop-blur transition-all duration-300">
+  <i data-lucide="check" class="h-4 w-4 text-[#a3e635]"></i><span>Скопировано</span>
+</div>
+
+<script>
+lucide.createIcons();
+
+/* ── исходник бота хранится в bot.py рядом; страница тянет его как текст ── */
+const FALLBACK_NOTE = "# Откройте эту страницу через http(s) (или локальный сервер),\n# чтобы увидеть исходник bot.py — файл лежит рядом, в той же директории.\n# Или просто откройте сам bot.py в редакторе.";
+
+const codeEl = document.getElementById('bot-code');
+let source = FALLBACK_NOTE;
+
+async function loadSource(){
+  try {
+    const res = await fetch('bot.py', {cache: 'no-store'});
+    if (!res.ok) throw new Error(res.status);
+    source = await res.text();
+  } catch(e) {
+    source = FALLBACK_NOTE;
+  }
+  codeEl.textContent = source;
+  hljs.highlightElement(codeEl);
+  const n = source.replace(/\n$/, '').split('\n').length;
+  document.getElementById('gutter').innerHTML =
+    Array.from({length: n}, (_, i) => `<div>${i + 1}</div>`).join('');
+  if (source !== FALLBACK_NOTE)
+    document.querySelectorAll('[data-lines]').forEach(el => el.textContent = n);
+  else
+    document.querySelectorAll('[data-lines]').forEach(el => el.textContent = '—');
+}
+loadSource();
+
+/* ── копирование + toast ── */
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.querySelector('span').textContent = msg;
+  t.classList.remove('opacity-0', 'translate-y-3');
+  clearTimeout(t._h);
+  t._h = setTimeout(() => t.classList.add('opacity-0', 'translate-y-3'), 1900);
+}
+async function copyText(text){
+  try { await navigator.clipboard.writeText(text); }
+  catch(e){
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  toast('Скопировано в буфер обмена');
+}
+function copySource(){ copyText(source); }
+
+/* ── reveal on scroll ── */
+const io = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting){ e.target.classList.add('visible'); io.unobserve(e.target); }
+  });
+}, {threshold: .12});
+document.querySelectorAll('.reveal').forEach(n => io.observe(n));
+
+/* ── лёгкий 3D-наклон окна кода ── */
+if (matchMedia('(pointer:fine)').matches){
+  const wrap = document.getElementById('code-wrap');
+  const frame = document.getElementById('code-frame');
+  wrap.addEventListener('mousemove', e => {
+    const r = wrap.getBoundingClientRect();
+    const rx = ((e.clientY - r.top - r.height/2) / r.height) * -3;
+    const ry = ((e.clientX - r.left - r.width/2) / r.width) * 4;
+    frame.style.transform = `rotateX(${rx}deg) rotateY(${ry}deg)`;
+  });
+  wrap.addEventListener('mouseleave', () => frame.style.transform = '');
+}
+
+/* ── живой терминал: полный цикл заявки ── */
+const term = document.getElementById('term');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const pad = (s, n) => s.padEnd(n, ' ');
+const stamp = () => new Date().toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
+function termLine(html){
+  const d = document.createElement('div');
+  d.className = 't-line';
+  d.innerHTML = html;
+  term.appendChild(d);
+}
+
+async function typeCommand(text){
+  const d = document.createElement('div');
+  d.className = 't-line flex items-center gap-2';
+  d.innerHTML = `<span class="t-prompt shrink-0">~/suggest&nbsp;$</span><span class="t-cmd"></span><span class="t-caret"></span>`;
+  term.appendChild(d);
+  const cmd = d.querySelector('.t-cmd');
+  for (const ch of text){ cmd.textContent += ch; await sleep(36 + Math.random() * 54); }
+  d.querySelector('.t-caret').remove();
+  await sleep(300);
+}
+
+const info = (src, msg) =>
+  termLine(`<span class="t-time">[${stamp()}]</span> <span class="t-info">INFO</span>&nbsp;&nbsp;&nbsp;<span class="t-src">${pad(src, 18)}</span><span class="t-msg">${msg}</span>`);
+
+async function terminalLoop(){
+  while (true){
+    term.innerHTML = '';
+    await typeCommand('python bot.py');
+    info('suggest', 'Предложка-бот запускается…'); await sleep(320);
+    info('aiogram.dispatcher', 'Run polling for @suggest_news_bot'); await sleep(650);
+
+    termLine(`<span class="t-in">⇐ @reader</span><span class="t-msg">${' '.repeat(3)}«Вечерний дайджест: рынки, погода, котики»</span>`); await sleep(420);
+    termLine(`<span class="t-ok">⇒ fsm</span><span class="t-msg">${' '.repeat(6)}PostSG.check · жду скриншот чека $500</span>`); await sleep(560);
+    termLine(`<span class="t-in">⇐ @reader</span><span class="t-msg">${' '.repeat(3)}photo: check_500.jpg</span>`); await sleep(500);
+    termLine(`<span class="t-ok">⇒ forum</span><span class="t-msg">${' '.repeat(4)}топик #241 «Пост | Андрей» создан</span>`); await sleep(380);
+    termLine(`<span class="t-pin">⇒ pin</span><span class="t-msg">${' '.repeat(6)}пост + чек закреплены · кнопки управления</span>`); await sleep(640);
+    termLine(`<span class="t-in">⇐ @admin</span><span class="t-msg">${' '.repeat(4)}в топике: «Принято, публикуем»</span>`); await sleep(420);
+    termLine(`<span class="t-ok">⇒ relay</span><span class="t-msg">${' '.repeat(5)}сообщение ушло автору от имени бота</span>`); await sleep(480);
+    termLine(`<span class="t-in">⇐ @admin</span><span class="t-msg">${' '.repeat(4)}нажал «Опубликовать в канал»</span>`); await sleep(420);
+    termLine(`<span class="t-ok">⇒ 200 OK</span><span class="t-msg">${' '.repeat(4)}пост в канале · топик #241: «✅» закрыт</span>`);
+    termLine(`<span class="flex items-center gap-2 pt-1"><span class="t-prompt shrink-0">~/suggest&nbsp;$</span><span class="t-caret"></span></span>`);
+    await sleep(5200);
+  }
+}
+terminalLoop();
+</script>
+</body>
+</html>
