@@ -27,6 +27,11 @@ bot.py — бот предложки новостного канала (aiogram 
   оба чата и напишет в лог, что он видит и какие у него права.
   ВАЖНО: если топики включали в обычной группе — Telegram превратил
   её в супергруппу, и её ID СМЕНИЛСЯ на -100xxxxxxxxxx.
+
+  При старте бот печатает абсолютный путь запущенного файла и все
+  загруженные константы — так сразу видно, тот ли bot.py запущен
+  и не остались ли значения-заглушки. Пока OWNER_ID — заглушка,
+  команда /ids работает для всех (режим первичной настройки).
 """
 
 import asyncio
@@ -56,13 +61,22 @@ from aiogram.types.inline_keyboard_button import InlineKeyboardButton as Btn
 
 # ═════════════════════════ НАСТРОЙКИ ═════════════════════════
 BOT_TOKEN      = os.getenv("BOT_TOKEN", "ВСТАВЬ_ТОКЕН_ОТ_BOTFATHER")
-OWNER_ID       = 111111111                            # системный владелец
-SYSADMIN_ID    = 222222222                            # системный администратор
-CHANNEL_ID     = -1001234567890                       # новостной канал (бот = админ)
-ADMIN_CHAT_ID  = -1001234567890                       # чат предложки с топиками (бот = админ)
-GOOGLE_DOC_URL = "https://docs.google.com/document/d/ВСТАВЬ_ID/edit"   # анкета
-POST_PRICE     = 500                                  # $ за пост в казну
-DB_PATH        = "suggest_bot.db"
+OWNER_ID       = int(os.getenv("OWNER_ID", "111111111"))         # системный владелец
+SYSADMIN_ID    = int(os.getenv("SYSADMIN_ID", "222222222"))      # системный администратор
+CHANNEL_ID     = int(os.getenv("CHANNEL_ID", "-1001234567890"))  # новостной канал (бот = админ)
+ADMIN_CHAT_ID  = int(os.getenv("ADMIN_CHAT_ID", "-1001234567890"))  # чат предложки с топиками
+GOOGLE_DOC_URL = os.getenv("GOOGLE_DOC_URL", "https://docs.google.com/document/d/ВСТАВЬ_ID/edit")
+POST_PRICE     = int(os.getenv("POST_PRICE", "500"))             # $ за пост в казну
+DB_PATH        = os.getenv("DB_PATH", "suggest_bot.db")
+BOT_BUILD      = "v3-config-fix"  # метка сборки: видна в логе при старте
+
+# Значения-заглушки: нужны, чтобы отличить «забыли заполнить» от реального ID
+_PLACEHOLDERS = {
+    "OWNER_ID": 111111111,
+    "SYSADMIN_ID": 222222222,
+    "CHANNEL_ID": -1001234567890,
+    "ADMIN_CHAT_ID": -1001234567890,
+}
 # ══════════════════════════════════════════════════════════════
 
 logging.basicConfig(
@@ -891,7 +905,8 @@ def extract_custom_emoji(m: Message) -> list[str]:
 
 @dp.message(Command("ids"))
 async def cmd_ids(m: Message, state: FSMContext) -> None:
-    if m.from_user.id != OWNER_ID:
+    owner_not_set = OWNER_ID == _PLACEHOLDERS["OWNER_ID"]
+    if m.from_user.id != OWNER_ID and not owner_not_set:
         return  # молча: команда только для владельца
     lines = [
         f"Ваш ID: <code>{m.from_user.id}</code>",
@@ -899,6 +914,11 @@ async def cmd_ids(m: Message, state: FSMContext) -> None:
     ]
     if m.message_thread_id:
         lines.append(f"Топик: <code>{m.message_thread_id}</code>")
+    if owner_not_set:
+        lines.append(
+            "⚠️ OWNER_ID ещё заглушка: /ids временно открыта всем — "
+            "впишите свой ID из этой строки в константу и перезапустите бота!"
+        )
     emojis = extract_custom_emoji(m)
     if emojis:
         lines.append("Премиум-эмодзи:")
@@ -911,7 +931,7 @@ async def cmd_ids(m: Message, state: FSMContext) -> None:
 
 @dp.message(IdsSG.emoji)
 async def ids_catch_emoji(m: Message, state: FSMContext) -> None:
-    if m.from_user.id != OWNER_ID:
+    if m.from_user.id != OWNER_ID and OWNER_ID != _PLACEHOLDERS["OWNER_ID"]:
         return
     emojis = extract_custom_emoji(m)
     if not emojis:
@@ -923,11 +943,23 @@ async def ids_catch_emoji(m: Message, state: FSMContext) -> None:
 # ───────────────────────── ЗАПУСК ─────────────────────────
 
 async def verify_config() -> None:
-    """Диагностика при старте: что бот реально видит по указанным ID."""
+    """Диагностика при старте: какой файл запущен и что бот реально видит."""
+    log.info("Запущен файл: %s · сборка %s", os.path.abspath(__file__), BOT_BUILD)
     log.info(
         "Конфиг · OWNER_ID=%s · SYSADMIN_ID=%s · ADMIN_CHAT_ID=%s · CHANNEL_ID=%s",
         OWNER_ID, SYSADMIN_ID, ADMIN_CHAT_ID, CHANNEL_ID,
     )
+    left = [k for k in _PLACEHOLDERS if globals()[k] == _PLACEHOLDERS[k]]
+    if "ВСТАВЬ" in GOOGLE_DOC_URL:
+        left.append("GOOGLE_DOC_URL")
+    if left:
+        log.error(
+            "НЕ ЗАПОЛНЕНЫ КОНСТАНТЫ: %s — бот работает на примерах-заглушках! "
+            "Отредактируйте именно ЭТОТ файл: %s (блок НАСТРОЙКИ в начале) "
+            "или задайте env-переменные с теми же именами. "
+            "Точные ID покажет /ids — пока бот не настроен, она открыта всем",
+            ", ".join(left), os.path.abspath(__file__),
+        )
     if ADMIN_CHAT_ID == CHANNEL_ID:
         log.warning(
             "ADMIN_CHAT_ID и CHANNEL_ID сейчас ОДИНАКОВЫЕ: %s — "
