@@ -310,8 +310,8 @@
           <span class="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-[#ff8a5c] transition-colors group-hover:bg-[#ff8a5c] group-hover:text-[#070907]"><i data-lucide="archive-restore" class="h-5 w-5"></i></span>
           <span class="font-display text-xs text-white/20">06</span>
         </div>
-        <h3 class="font-display text-lg font-bold">Восстановление + /ids</h3>
-        <p class="mt-3 text-sm leading-7 text-white/50">Категория «Восстановление» собирает до 20 доказательств из старого бота одним топиком. А владельцу <span class="text-white/75">/ids</span> показывает ID чатов, топиков и премиум-эмодзи.</p>
+        <h3 class="font-display text-lg font-bold">Чистый чат + премиум-эмодзи</h3>
+        <p class="mt-3 text-sm leading-7 text-white/50">Мастер заявки стирает за собой вопросы и ответы — диалог не превращается в свалку, финал каждой процедуры = свежее меню. Премиум-эмодзи украшают сообщения и <span class="text-white/75">иконки топиков</span>: ID собирает <span class="text-white/75">/ids</span>, а вписываете их в блок констант.</p>
       </div>
     </div>
   </div>
@@ -518,7 +518,8 @@ async function terminalLoop(){
     termLine(`<span class="t-in">⇐ @admin</span><span class="t-msg">${' '.repeat(4)}в топике: «Принято, публикуем»</span>`); await sleep(420);
     termLine(`<span class="t-ok">⇒ relay</span><span class="t-msg">${' '.repeat(5)}сообщение ушло автору от имени бота</span>`); await sleep(480);
     termLine(`<span class="t-in">⇐ @admin</span><span class="t-msg">${' '.repeat(4)}нажал «Опубликовать в канал»</span>`); await sleep(420);
-    termLine(`<span class="t-ok">⇒ 200 OK</span><span class="t-msg">${' '.repeat(4)}пост в канале · топик #241: «✅» закрыт</span>`);
+    termLine(`<span class="t-ok">⇒ 200 OK</span><span class="t-msg">${' '.repeat(4)}пост в канале · топик #241: «✅» закрыт</span>`); await sleep(340);
+    termLine(`<span class="t-pin">⇒ sweep</span><span class="t-msg">${' '.repeat(4)}диалог с автором почищен · свежее меню отправлено</span>`);
     termLine(`<span class="flex items-center gap-2 pt-1"><span class="t-prompt shrink-0">~/suggest&nbsp;$</span><span class="t-caret"></span></span>`);
     await sleep(5200);
   }

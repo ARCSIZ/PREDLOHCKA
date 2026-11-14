@@ -54,6 +54,7 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardMarkup,
     Message,
+    MessageEntity,
     ReactionTypeEmoji,
     User,
 )
@@ -71,7 +72,21 @@ POST_PRICE     = int(os.getenv("POST_PRICE", "500"))             # $ за пос
 # «Обновить из Git». Локально DATA_DIR нет — база будет рядом с bot.py
 DATA_DIR       = os.getenv("DATA_DIR", ".")
 DB_PATH        = os.getenv("DB_PATH", os.path.join(DATA_DIR, "suggest_bot.db"))
-BOT_BUILD      = "v4.1-pin-fix"  # метка сборки: видна в логе при старте
+BOT_BUILD      = "v5-clean-emoji"  # метка сборки: видна в логе при старте
+
+# ═══════════════ ПРЕМИУМ-ЭМОДЗИ ═══════════════
+# ID эмодзи берите командой /ids: отправьте боту премиум-эмодзи —
+# он вернёт их custom_emoji_id. Пустая строка = фича выключена,
+# всё продолжит работать обычным текстом.
+EMOJI_MENU     = ""   # главное меню /start
+EMOJI_POST     = ""   # «пришлите текст поста»
+EMOJI_CHECK    = ""   # «жду скриншот чека $500»
+EMOJI_DONE     = ""   # финальное «готово!» после заявки
+EMOJI_RECRUIT  = ""   # рассылка «объявлен набор в персонал»
+# Иконки форум-топиков заявок (Bot API 9.0+; если API не примет — просто пропустится)
+TOPIC_ICON_POST    = ""   # иконка топика «Пост»
+TOPIC_ICON_RESTORE = ""   # иконка топика «Восстановление»
+TOPIC_ICON_APPLY   = ""   # иконка топика «Анкета»
 
 # Значения-заглушки: нужны, чтобы отличить «забыли заполнить» от реального ID
 _PLACEHOLDERS = {
@@ -310,6 +325,18 @@ def head_html(user: User, kind: str) -> str:
 async def open_topic(user: User, kind: str) -> tuple[int, str]:
     title = f"{kind} | {user.full_name[:24]} | {user.id}"[:128]
     topic = await bot.create_forum_topic(ADMIN_CHAT_ID, name=title)
+    icon = {"Пост": TOPIC_ICON_POST,
+            "Восстановление": TOPIC_ICON_RESTORE,
+            "Анкета": TOPIC_ICON_APPLY}.get(kind, "")
+    if icon:
+        res = await raw_api("editForumTopic", {
+            "chat_id": ADMIN_CHAT_ID,
+            "message_thread_id": topic.message_thread_id,
+            "icon_custom_emoji_id": icon,
+        })
+        if not res.get("ok"):
+            log.info("Иконка топика не установилась (%s) — едем без неё",
+                     res.get("description"))
     return topic.message_thread_id, title
 
 
@@ -327,6 +354,19 @@ async def try_open_topic(user: User, kind: str) -> tuple[int, str] | None:
         return None
 
 
+async def raw_api(method: str, payload: dict) -> dict:
+    """Прямой вызов Bot API — для параметров, которых нет в старом aiogram."""
+    import aiohttp
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(url, json=payload) as r:
+                return await r.json()
+    except Exception as e:
+        log.warning("raw_api %s: %s", method, e)
+        return {"ok": False, "description": str(e)}
+
+
 async def safe_pin(chat_id: int, message_id: int, thread_id: int) -> None:
     """Закреп внутри топика. На старом aiogram (<3.7), который не знает
     message_thread_id, уходим в Bot API напрямую — aiohttp и так с нами."""
@@ -341,25 +381,40 @@ async def safe_pin(chat_id: int, message_id: int, thread_id: int) -> None:
     except TelegramBadRequest as e:
         log.warning("Не удалось закрепить: %s", e.message)
         return
-    try:
-        import aiohttp
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/pinChatMessage"
-        payload = {
-            "chat_id": chat_id,
-            "message_id": message_id,
-            "message_thread_id": thread_id,
-            "disable_notification": True,
-        }
-        async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=payload) as r:
-                data = await r.json()
-        if not data.get("ok"):
-            log.warning("pinChatMessage API: %s", data.get("description"))
-        else:
-            log.info("pin через прямой Bot API ок (message %s, топик %s)",
-                     message_id, thread_id)
-    except Exception as e:
-        log.warning("pin fallback: %s", e)
+    data = await raw_api("pinChatMessage", {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "message_thread_id": thread_id,
+        "disable_notification": True,
+    })
+    if data.get("ok"):
+        log.info("pin через прямой Bot API ок (message %s, топик %s)",
+                 message_id, thread_id)
+    else:
+        log.warning("pinChatMessage API: %s", data.get("description"))
+
+
+# ── Антиспам: чистим чат за мастером заявки ──
+
+async def sweep(chat_id: int, ids: list) -> None:
+    """Молча удаляет сообщения (старше 48 ч API не даст — просто пропустим)."""
+    for mid in set(x for x in ids if x):
+        try:
+            await bot.delete_message(chat_id, mid)
+        except TelegramBadRequest:
+            pass
+
+
+# ── Премиум-эмодзи в сообщениях бота ──
+
+async def send_fx(chat_id: int, emoji_id: str, text: str, **kw) -> Message:
+    """Сообщение с премиум-эмодзи в начале. Нет ID — обычный текст."""
+    if emoji_id:
+        ent = MessageEntity(type="custom_emoji", offset=0, length=1,
+                            custom_emoji_id=emoji_id)
+        return await bot.send_message(chat_id, f"⚡ {text}",
+                                      entities=[ent], **kw)
+    return await bot.send_message(chat_id, text, **kw)
 
 
 async def finalize_topic(row: sqlite3.Row, mark: str, status: str,
@@ -376,7 +431,7 @@ async def finalize_topic(row: sqlite3.Row, mark: str, status: str,
         log.warning("close_forum_topic: %s", e.message)
     db_topic_status(tid, status)
     try:
-        await bot.send_message(row["user_id"], user_note)
+        await send_fx(row["user_id"], EMOJI_DONE, user_note)
     except TelegramForbiddenError:
         log.info("Пользователь %s недоступен для уведомления", row["user_id"])
     log.info("Заявка #%s: %s (%s)", tid, verb, html.quote(admin.full_name))
@@ -405,11 +460,14 @@ dp.callback_query.middleware(BlockMiddleware())
 # ═════════════════════ ПОЛЬЗОВАТЕЛЬСКАЯ ЧАСТЬ ═════════════════════
 
 @dp.message(CommandStart(), F.chat.type == ChatType.PRIVATE)
-async def cmd_start(m: Message) -> None:
+async def cmd_start(m: Message, state: FSMContext) -> None:
     db_user_upsert(m.from_user)
-    await m.answer(
+    await state.clear()
+    await sweep(m.chat.id, [m.message_id])  # стираем сам /start
+    await send_fx(
+        m.chat.id, EMOJI_MENU,
         f"Привет, <b>{html.quote(m.from_user.first_name)}</b>!\n"
-        f"Я предложка новостного канала.\n\n"
+        "Я предложка новостного канала.\n\n"
         f"1 пост = <b>${POST_PRICE}</b> переводом в казну —\n"
         "после текста попрошу скриншот чека.\n"
         "Ответ администрации придёт от моего имени.",
@@ -451,17 +509,26 @@ async def cmd_help(m: Message) -> None:
 @dp.message(Command("cancel"), F.chat.type == ChatType.PRIVATE)
 async def cmd_cancel(m: Message, state: FSMContext) -> None:
     if await state.get_state():
+        data = await state.get_data()
         await state.clear()
-        await m.answer("Действие отменено.", reply_markup=kb_menu())
+        # стираем подсказки бота, ответы пользователя и саму команду
+        await sweep(m.chat.id, [data.get("prompt"), *data.get("in", []),
+                                m.message_id])
+        await send_fx(m.chat.id, EMOJI_MENU,
+                      "Действие отменено.", reply_markup=kb_menu())
     else:
         await m.answer("Нечего отменять.")
 
 
 @dp.callback_query(F.data == "flow:cancel")
 async def cb_flow_cancel(c: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
     await state.clear()
+    await sweep(c.message.chat.id, [data.get("prompt"), *data.get("in", []),
+                                    c.message.message_id])
     await c.answer("Отменено")
-    await c.message.edit_text("Действие отменено. /start — в главное меню.")
+    await send_fx(c.message.chat.id, EMOJI_MENU,
+                  "Действие отменено.", reply_markup=kb_menu())
 
 # ── Сцена 1: пост за $500 ──
 
@@ -469,34 +536,48 @@ async def cb_flow_cancel(c: CallbackQuery, state: FSMContext) -> None:
 async def cb_new_post(c: CallbackQuery, state: FSMContext) -> None:
     db_user_upsert(c.from_user)
     await state.set_state(PostSG.text)
-    await c.answer()
-    await c.message.answer(
+    await sweep(c.message.chat.id, [c.message.message_id])  # стираем меню
+    prompt = await send_fx(
+        c.message.chat.id, EMOJI_POST,
         "<b>Новый пост</b>\nПришлите текст (или фото с подписью) для канала.",
         reply_markup=kb_cancel(),
     )
+    await state.update_data(prompt=prompt.message_id, **{"in": []})
+    await c.answer()
 
 
 @dp.message(PostSG.text, F.chat.type == ChatType.PRIVATE)
 async def post_got_text(m: Message, state: FSMContext) -> None:
-    await state.update_data(post_msg=m.message_id)
+    data = await state.get_data()
+    await sweep(m.chat.id, [data.get("prompt")])  # стираем вопрос про текст
     await state.set_state(PostSG.check)
-    await m.answer(
+    prompt = await send_fx(
+        m.chat.id, EMOJI_CHECK,
         f"Принято. Теперь оплата: <b>1 пост = ${POST_PRICE} в казну</b>.\n"
         "Пришлите <u>скриншот перевода</u> одним фото.",
         reply_markup=kb_cancel(),
     )
+    # текст поста НЕ удаляем, пока не скопирован в топик — чистим в финале
+    await state.update_data(post_msg=m.message_id, prompt=prompt.message_id,
+                            **{"in": [m.message_id]})
 
 
 @dp.message(PostSG.check, F.chat.type == ChatType.PRIVATE)
 async def post_got_check(m: Message, state: FSMContext) -> None:
-    if not m.photo:
-        await m.answer("Нужен именно скриншот — отправьте фото чека.", reply_markup=kb_cancel())
-        return
     data = await state.get_data()
+    if not m.photo:
+        await sweep(m.chat.id, [data.get("prompt"), m.message_id])
+        prompt = await send_fx(
+            m.chat.id, EMOJI_CHECK,
+            "Нужен именно скриншот — отправьте фото чека.",
+            reply_markup=kb_cancel(),
+        )
+        await state.update_data(prompt=prompt.message_id)
+        return
     await state.clear()
     topic = await try_open_topic(m.from_user, "Пост")
     if topic is None:
-        await m.answer("Техническая пауза — попробуйте через минуту.")
+        await m.answer("Техническая пауза — попробуйте через минуту. /start")
         return
     tid, title = topic
 
@@ -516,8 +597,12 @@ async def post_got_check(m: Message, state: FSMContext) -> None:
     await safe_pin(ADMIN_CHAT_ID, mgmt.message_id, tid)
     db_topic_save(tid, m.from_user.id, "post", title, post_copy.message_id)
 
-    await m.answer(
-        "Готово! Пост и чек переданы администрации.\n"
+    # всё скопировано в топик — чистим диалог: чек, текст поста, подсказки
+    await sweep(m.chat.id, [data.get("prompt"), *data.get("in", []),
+                            m.message_id])
+    await send_fx(
+        m.chat.id, EMOJI_DONE,
+        "<b>Готово!</b> Пост и чек переданы администрации.\n"
         "Решение и вопросы придут от меня — оставайтесь на связи.",
         reply_markup=kb_menu(),
     )
@@ -529,15 +614,17 @@ async def post_got_check(m: Message, state: FSMContext) -> None:
 async def cb_restore(c: CallbackQuery, state: FSMContext) -> None:
     db_user_upsert(c.from_user)
     await state.set_state(RestoreSG.collecting)
-    await state.update_data(items=[])
-    await c.answer()
-    await c.message.answer(
+    await sweep(c.message.chat.id, [c.message.message_id])  # стираем меню
+    prompt = await send_fx(
+        c.message.chat.id, EMOJI_POST,
         "<b>Восстановление</b>\n"
         "Перешлите сюда скриншоты доказательств и продублируйте "
         "сообщения из старого бота (до 20 штук, по одному).\n"
         "Каждое сообщение отмечу 👍. Когда всё — нажмите «Готово».",
         reply_markup=kb_ready(),
     )
+    await state.update_data(items=[], prompt=prompt.message_id, **{"in": []})
+    await c.answer()
 
 
 @dp.message(RestoreSG.collecting, F.chat.type == ChatType.PRIVATE)
@@ -548,7 +635,9 @@ async def restore_collect(m: Message, state: FSMContext) -> None:
         await m.answer("Уже 20 материалов — нажмите «Готово».", reply_markup=kb_ready())
         return
     items.append({"chat": m.chat.id, "msg": m.message_id})
-    await state.update_data(items=items)
+    inputs = data.get("in", [])
+    inputs.append(m.message_id)
+    await state.update_data(items=items, **{"in": inputs})
     try:
         await m.react([ReactionTypeEmoji(emoji="👍")])
     except TelegramBadRequest:
@@ -565,7 +654,7 @@ async def restore_done(c: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     topic = await try_open_topic(c.from_user, "Восстановление")
     if topic is None:
-        await c.message.edit_text("Техническая пауза — попробуйте через минуту. /start")
+        await c.answer("Техническая пауза — попробуйте через минуту", show_alert=True)
         return
     tid, title = topic
     head = await bot.send_message(
@@ -586,9 +675,14 @@ async def restore_done(c: CallbackQuery, state: FSMContext) -> None:
     )
     await safe_pin(ADMIN_CHAT_ID, mgmt.message_id, tid)
     db_topic_save(tid, c.from_user.id, "restore", title)
-    await c.message.edit_text(
-        f"Передал администрации {len(items)} материал(а/ов). "
-        "Ответ придёт от меня. /start — меню."
+    # материалы уже в топике — стираем всю подборку и приглашение
+    await sweep(c.message.chat.id, [data.get("prompt"), *data.get("in", []),
+                                    c.message.message_id])
+    await send_fx(
+        c.message.chat.id, EMOJI_DONE,
+        f"<b>Готово!</b> Передал администрации {len(items)} материал(а/ов).\n"
+        "Ответ придёт от меня.",
+        reply_markup=kb_menu(),
     )
     await c.answer("Готово")
 
@@ -601,13 +695,14 @@ async def cb_apply(c: CallbackQuery, state: FSMContext) -> None:
         return
     db_user_upsert(c.from_user)
     await state.set_state(ApplySG.q)
-    await state.update_data(a=[], step=0)
-    await c.answer()
-    await c.message.answer(
+    await sweep(c.message.chat.id, [c.message.message_id])  # стираем меню
+    prompt = await c.message.answer(
         f"<b>Анкета сотрудника</b> · вопрос 1/{len(APPLY_QUESTIONS)}\n"
         f"{APPLY_QUESTIONS[0]}",
         reply_markup=kb_cancel(),
     )
+    await state.update_data(a=[], step=0, prompt=prompt.message_id, **{"in": []})
+    await c.answer()
 
 
 @dp.message(ApplySG.q, F.chat.type == ChatType.PRIVATE)
@@ -616,13 +711,19 @@ async def apply_step(m: Message, state: FSMContext) -> None:
     answers: list = data.get("a", [])
     answers.append(html.quote((m.text or m.caption or "[медиа]")[:600]))
     step = data.get("step", 0) + 1
+    inputs = data.get("in", []) + [m.message_id]
+    # стираем предыдущий вопрос — чат остаётся чистым, анкета уже в памяти
+    await sweep(m.chat.id, [data.get("prompt")])
     if step < len(APPLY_QUESTIONS):
-        await state.update_data(a=answers, step=step)
-        await m.answer(
+        prompt = await send_fx(
+            m.chat.id, EMOJI_POST,
             f"Вопрос {step + 1}/{len(APPLY_QUESTIONS)}\n{APPLY_QUESTIONS[step]}",
             reply_markup=kb_cancel(),
         )
+        await state.update_data(a=answers, step=step, prompt=prompt.message_id,
+                                **{"in": inputs})
         return
+    await state.update_data(**{"in": inputs})
     await state.clear()
     topic = await try_open_topic(m.from_user, "Анкета")
     if topic is None:
@@ -645,8 +746,11 @@ async def apply_step(m: Message, state: FSMContext) -> None:
     )
     await safe_pin(ADMIN_CHAT_ID, mgmt.message_id, tid)
     db_topic_save(tid, m.from_user.id, "apply", title)
-    await m.answer(
-        "Анкета отправлена! Если кандидатура подойдёт — "
+    # анкета уже собрана в топике — стираем все вопросы и ответы из диалога
+    await sweep(m.chat.id, [data.get("prompt"), *inputs])
+    await send_fx(
+        m.chat.id, EMOJI_DONE,
+        "<b>Анкета отправлена!</b> Если кандидатура подойдёт — "
         "администрация напишет вам от моего имени.",
         reply_markup=kb_menu(),
     )
@@ -744,9 +848,10 @@ async def cb_make_admin(c: CallbackQuery) -> None:
         f"<b>Кандидат принят в админы</b>\n{html.quote(c.from_user.full_name)}"
     )
     try:
-        await bot.send_message(
-            uid, "Поздравляем! Вы приняты в команду предложки. "
-                 "Команды администратора: /help"
+        await send_fx(
+            uid, EMOJI_DONE,
+            "<b>Поздравляем!</b> Вы приняты в команду предложки.\n"
+            "Команды администратора: /help",
         )
     except TelegramForbiddenError:
         pass
@@ -795,7 +900,7 @@ async def cmd_recruit(m: Message, command: CommandObject) -> None:
         ok = fail = 0
         for uid in db_all_users():
             try:
-                await bot.send_message(uid, text, reply_markup=kb)
+                await send_fx(uid, EMOJI_RECRUIT, text, reply_markup=kb)
                 ok += 1
             except Exception:
                 fail += 1
