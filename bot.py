@@ -52,9 +52,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     BotCommand,
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardMarkup,
     Message,
-    MessageEntity,
     ReactionTypeEmoji,
     User,
 )
@@ -72,21 +72,22 @@ POST_PRICE     = int(os.getenv("POST_PRICE", "500"))             # $ за пос
 # «Обновить из Git». Локально DATA_DIR нет — база будет рядом с bot.py
 DATA_DIR       = os.getenv("DATA_DIR", ".")
 DB_PATH        = os.getenv("DB_PATH", os.path.join(DATA_DIR, "suggest_bot.db"))
-BOT_BUILD      = "v5-clean-emoji"  # метка сборки: видна в логе при старте
+MEDIA_DIR      = os.getenv("MEDIA_DIR", "")  # необязательно: отдельная папка с GIF
+BOT_BUILD      = "v6-gif-menu"  # метка сборки: видна в логе при старте
 
 # ═══════════════ ПРЕМИУМ-ЭМОДЗИ ═══════════════
 # ID эмодзи берите командой /ids: отправьте боту премиум-эмодзи —
 # он вернёт их custom_emoji_id. Пустая строка = фича выключена,
 # всё продолжит работать обычным текстом.
-EMOJI_MENU     = ""   # главное меню /start
-EMOJI_POST     = ""   # «пришлите текст поста»
-EMOJI_CHECK    = ""   # «жду скриншот чека $500»
-EMOJI_DONE     = ""   # финальное «готово!» после заявки
-EMOJI_RECRUIT  = ""   # рассылка «объявлен набор в персонал»
+EMOJI_MENU     = "5332762073388578651"   # главное меню /start
+EMOJI_POST     = "5332604186095811978"   # «пришлите текст поста»
+EMOJI_CHECK    = "5332688668102525212"   # «жду скриншот чека $500»
+EMOJI_DONE     = "5404754074685966817"   # финальное «готово!» после заявки
+EMOJI_RECRUIT  = "5411335287433364660"   # рассылка «объявлен набор в персонал»
 # Иконки форум-топиков заявок (Bot API 9.0+; если API не примет — просто пропустится)
-TOPIC_ICON_POST    = ""   # иконка топика «Пост»
-TOPIC_ICON_RESTORE = ""   # иконка топика «Восстановление»
-TOPIC_ICON_APPLY   = ""   # иконка топика «Анкета»
+TOPIC_ICON_POST    = "5332739052363872903"   # иконка топика «Пост»
+TOPIC_ICON_RESTORE = "5411192398166396991"   # иконка топика «Восстановление»
+TOPIC_ICON_APPLY   = "5408921580237522074"   # иконка топика «Анкета»
 
 # Значения-заглушки: нужны, чтобы отличить «забыли заполнить» от реального ID
 _PLACEHOLDERS = {
@@ -405,16 +406,102 @@ async def sweep(chat_id: int, ids: list) -> None:
             pass
 
 
-# ── Премиум-эмодзи в сообщениях бота ──
+# ── Премиум-эмодзи и GIF в сообщениях бота ──
+
+def fx_text(emoji_id: str, text: str) -> str:
+    """HTML-префикс с custom emoji, совместимый с обычным текстом и caption."""
+    if not emoji_id:
+        return text
+    return f'<tg-emoji emoji-id="{emoji_id}">⭐</tg-emoji> {text}'
+
 
 async def send_fx(chat_id: int, emoji_id: str, text: str, **kw) -> Message:
-    """Сообщение с премиум-эмодзи в начале. Нет ID — обычный текст."""
-    if emoji_id:
-        ent = MessageEntity(type="custom_emoji", offset=0, length=1,
-                            custom_emoji_id=emoji_id)
-        return await bot.send_message(chat_id, f"⚡ {text}",
-                                      entities=[ent], **kw)
-    return await bot.send_message(chat_id, text, **kw)
+    """Обычное сообщение с премиум-эмодзи в начале."""
+    try:
+        return await bot.send_message(chat_id, fx_text(emoji_id, text), **kw)
+    except TelegramBadRequest as e:
+        if emoji_id:
+            log.warning("Премиум-эмодзи %s не отправился: %s", emoji_id, e.message)
+            return await bot.send_message(chat_id, text, **kw)
+        raise
+
+
+def media_path(filename: str) -> str | None:
+    """Ищет GIF в MEDIA_DIR, рядом с bot.py и в постоянной /app/data."""
+    names = [filename, filename.lower(), filename.capitalize()]
+    roots = [MEDIA_DIR, os.path.dirname(os.path.abspath(__file__)), DATA_DIR]
+    for root in dict.fromkeys(x for x in roots if x):
+        for name in dict.fromkeys(names):
+            path = os.path.abspath(os.path.join(root, name))
+            if os.path.isfile(path):
+                return path
+    return None
+
+
+async def send_gif(chat_id: int, filename: str, emoji_id: str,
+                   text: str, **kw) -> Message:
+    """GIF + caption + кнопки одним сообщением; без файла откатится на текст."""
+    path = media_path(filename)
+    cache_key = f"media_file_id:{filename.lower()}"
+    signature_key = f"media_signature:{filename.lower()}"
+    cached_id = get_setting(cache_key, "")
+    signature = ""
+    if path:
+        stat = os.stat(path)
+        signature = f"{stat.st_size}:{stat.st_mtime_ns}"
+    cached_signature = get_setting(signature_key, "")
+
+    if cached_id and (not path or cached_signature == signature):
+        try:
+            return await bot.send_animation(
+                chat_id, cached_id, caption=fx_text(emoji_id, text), **kw,
+            )
+        except TelegramBadRequest as e:
+            log.warning("Кэш GIF %s не отправился: %s", filename, e.message)
+            if emoji_id:
+                try:
+                    return await bot.send_animation(
+                        chat_id, cached_id, caption=text, **kw,
+                    )
+                except TelegramBadRequest:
+                    pass
+
+    if not path:
+        log.warning(
+            "GIF %s не найден. Положите его рядом с bot.py или в %s; "
+            "пока отправляю обычный текст",
+            filename, os.path.abspath(DATA_DIR),
+        )
+        return await send_fx(chat_id, emoji_id, text, **kw)
+
+    try:
+        msg = await bot.send_animation(
+            chat_id, FSInputFile(path), caption=fx_text(emoji_id, text), **kw,
+        )
+    except TelegramBadRequest as e:
+        if not emoji_id:
+            raise
+        log.warning("GIF с премиум-эмодзи не отправился: %s; повтор без эмодзи", e.message)
+        msg = await bot.send_animation(
+            chat_id, FSInputFile(path), caption=text, **kw,
+        )
+    if msg.animation:
+        set_setting(cache_key, msg.animation.file_id)
+        set_setting(signature_key, signature)
+    return msg
+
+
+async def send_menu(chat_id: int, text: str,
+                    emoji_id: str = EMOJI_MENU) -> Message:
+    """Удаляет прошлое меню и присылает Menu.gif с caption и кнопками."""
+    key = f"last_menu:{chat_id}"
+    old_id = int(get_setting(key, "0") or 0)
+    await sweep(chat_id, [old_id])
+    msg = await send_gif(
+        chat_id, "Menu.gif", emoji_id, text, reply_markup=kb_menu(),
+    )
+    set_setting(key, str(msg.message_id))
+    return msg
 
 
 async def finalize_topic(row: sqlite3.Row, mark: str, status: str,
@@ -464,14 +551,13 @@ async def cmd_start(m: Message, state: FSMContext) -> None:
     db_user_upsert(m.from_user)
     await state.clear()
     await sweep(m.chat.id, [m.message_id])  # стираем сам /start
-    await send_fx(
-        m.chat.id, EMOJI_MENU,
+    await send_menu(
+        m.chat.id,
         f"Привет, <b>{html.quote(m.from_user.first_name)}</b>!\n"
         "Я предложка новостного канала.\n\n"
         f"1 пост = <b>${POST_PRICE}</b> переводом в казну —\n"
         "после текста попрошу скриншот чека.\n"
         "Ответ администрации придёт от моего имени.",
-        reply_markup=kb_menu(),
     )
 
 
@@ -514,8 +600,7 @@ async def cmd_cancel(m: Message, state: FSMContext) -> None:
         # стираем подсказки бота, ответы пользователя и саму команду
         await sweep(m.chat.id, [data.get("prompt"), *data.get("in", []),
                                 m.message_id])
-        await send_fx(m.chat.id, EMOJI_MENU,
-                      "Действие отменено.", reply_markup=kb_menu())
+        await send_menu(m.chat.id, "Действие отменено.")
     else:
         await m.answer("Нечего отменять.")
 
@@ -527,8 +612,7 @@ async def cb_flow_cancel(c: CallbackQuery, state: FSMContext) -> None:
     await sweep(c.message.chat.id, [data.get("prompt"), *data.get("in", []),
                                     c.message.message_id])
     await c.answer("Отменено")
-    await send_fx(c.message.chat.id, EMOJI_MENU,
-                  "Действие отменено.", reply_markup=kb_menu())
+    await send_menu(c.message.chat.id, "Действие отменено.")
 
 # ── Сцена 1: пост за $500 ──
 
@@ -537,8 +621,8 @@ async def cb_new_post(c: CallbackQuery, state: FSMContext) -> None:
     db_user_upsert(c.from_user)
     await state.set_state(PostSG.text)
     await sweep(c.message.chat.id, [c.message.message_id])  # стираем меню
-    prompt = await send_fx(
-        c.message.chat.id, EMOJI_POST,
+    prompt = await send_gif(
+        c.message.chat.id, "new.gif", EMOJI_POST,
         "<b>Новый пост</b>\nПришлите текст (или фото с подписью) для канала.",
         reply_markup=kb_cancel(),
     )
@@ -600,11 +684,11 @@ async def post_got_check(m: Message, state: FSMContext) -> None:
     # всё скопировано в топик — чистим диалог: чек, текст поста, подсказки
     await sweep(m.chat.id, [data.get("prompt"), *data.get("in", []),
                             m.message_id])
-    await send_fx(
-        m.chat.id, EMOJI_DONE,
+    await send_menu(
+        m.chat.id,
         "<b>Готово!</b> Пост и чек переданы администрации.\n"
         "Решение и вопросы придут от меня — оставайтесь на связи.",
-        reply_markup=kb_menu(),
+        emoji_id=EMOJI_DONE,
     )
     log.info("Заявка #%s: пост от %s", tid, m.from_user.id)
 
@@ -615,8 +699,8 @@ async def cb_restore(c: CallbackQuery, state: FSMContext) -> None:
     db_user_upsert(c.from_user)
     await state.set_state(RestoreSG.collecting)
     await sweep(c.message.chat.id, [c.message.message_id])  # стираем меню
-    prompt = await send_fx(
-        c.message.chat.id, EMOJI_POST,
+    prompt = await send_gif(
+        c.message.chat.id, "restore.gif", EMOJI_POST,
         "<b>Восстановление</b>\n"
         "Перешлите сюда скриншоты доказательств и продублируйте "
         "сообщения из старого бота (до 20 штук, по одному).\n"
@@ -678,11 +762,11 @@ async def restore_done(c: CallbackQuery, state: FSMContext) -> None:
     # материалы уже в топике — стираем всю подборку и приглашение
     await sweep(c.message.chat.id, [data.get("prompt"), *data.get("in", []),
                                     c.message.message_id])
-    await send_fx(
-        c.message.chat.id, EMOJI_DONE,
+    await send_menu(
+        c.message.chat.id,
         f"<b>Готово!</b> Передал администрации {len(items)} материал(а/ов).\n"
         "Ответ придёт от меня.",
-        reply_markup=kb_menu(),
+        emoji_id=EMOJI_DONE,
     )
     await c.answer("Готово")
 
@@ -748,11 +832,11 @@ async def apply_step(m: Message, state: FSMContext) -> None:
     db_topic_save(tid, m.from_user.id, "apply", title)
     # анкета уже собрана в топике — стираем все вопросы и ответы из диалога
     await sweep(m.chat.id, [data.get("prompt"), *inputs])
-    await send_fx(
-        m.chat.id, EMOJI_DONE,
+    await send_menu(
+        m.chat.id,
         "<b>Анкета отправлена!</b> Если кандидатура подойдёт — "
         "администрация напишет вам от моего имени.",
-        reply_markup=kb_menu(),
+        emoji_id=EMOJI_DONE,
     )
 
 # ═════════════════════ УПРАВЛЕНИЕ В ТОПИКАХ ═════════════════════
@@ -892,7 +976,7 @@ async def cmd_recruit(m: Message, command: CommandObject) -> None:
             Btn(text="Открыть анкету · Google Docs", url=GOOGLE_DOC_URL)
         ]])
         text = (
-            "📣 <b>Объявлен набор в персонал предложки!</b>\n\n"
+            "<b>Объявлен набор в персонал предложки!</b>\n\n"
             "Хочешь помогать новостному каналу? Заполни анкету по кнопке "
             "ниже или пройди мини-анкету прямо здесь: /start → "
             "«Подать анкету в персонал»."
@@ -900,7 +984,9 @@ async def cmd_recruit(m: Message, command: CommandObject) -> None:
         ok = fail = 0
         for uid in db_all_users():
             try:
-                await send_fx(uid, EMOJI_RECRUIT, text, reply_markup=kb)
+                await send_gif(
+                    uid, "admin.gif", EMOJI_RECRUIT, text, reply_markup=kb,
+                )
                 ok += 1
             except Exception:
                 fail += 1
@@ -1085,6 +1171,18 @@ async def verify_config() -> None:
         "Конфиг · OWNER_ID=%s · SYSADMIN_ID=%s · ADMIN_CHAT_ID=%s · CHANNEL_ID=%s",
         OWNER_ID, SYSADMIN_ID, ADMIN_CHAT_ID, CHANNEL_ID,
     )
+    for filename in ("Menu.gif", "new.gif", "restore.gif", "admin.gif"):
+        path = media_path(filename)
+        cached = get_setting(f"media_file_id:{filename.lower()}", "")
+        if path:
+            log.info("Медиа %s: %s", filename, path)
+        elif cached:
+            log.info("Медиа %s: Telegram file_id из кэша", filename)
+        else:
+            log.warning(
+                "Медиа %s не найдено: загрузите рядом с bot.py или в %s",
+                filename, os.path.abspath(DATA_DIR),
+            )
     left = [k for k in _PLACEHOLDERS if globals()[k] == _PLACEHOLDERS[k]]
     if "ВСТАВЬ" in GOOGLE_DOC_URL:
         left.append("GOOGLE_DOC_URL")
